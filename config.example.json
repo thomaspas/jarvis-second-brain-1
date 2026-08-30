@@ -1,6 +1,10 @@
 {
+  "provider": "local",
   "api_key": "PUT-YOUR-KEY-HERE",
   "model": "claude-opus-4-8",
   "wake_word": "jarvis",
-  "notes_dir": ""
+  "notes_dir": "",
+  "local_base_url": "http://127.0.0.1:11434/v1",
+  "local_model": "",
+  "local_api_key_file": "~/.cursor/local-llm-api.key"
 }
