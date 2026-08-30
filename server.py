@@ -2,14 +2,18 @@
 """Servidor do Jarvis: serve viewer/ e expõe /chat e /remember.
 
 Só biblioteca padrão. A API key vive em config.json (fora de viewer/)
-e nunca é enviada ao navegador. Se a key ainda for o placeholder,
-o /chat cai para `claude -p` (usa sua assinatura do Claude Code).
+e nunca é enviada ao navegador.
+
+provider=local → OpenAI-compatible http://127.0.0.1:11434/v1 (sem Anthropic /
+claude -p). Caso contrário: Anthropic API, ou fallback `claude -p` se a key
+ainda for o placeholder.
 """
 import json
 import os
 import re
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
@@ -19,6 +23,7 @@ _cfg = json.load(open(os.path.join(BASE, "config.json"), encoding="utf-8"))
 NOTES_DIR = _cfg.get("notes_dir") or os.path.join(BASE, "notes")
 SKIP_DIRS = {".obsidian", ".smart-env", ".trash", ".git", "node_modules"}
 PORT = 4700
+DEFAULT_LOCAL_KEY_FILE = "/home/thomas-pashoulas/.cursor/deepseek-cursor-api.key"
 
 HISTORY = []  # histórico curto da sessão (lado servidor)
 MAX_HISTORY = 12
@@ -54,12 +59,30 @@ TOOLS = [
          "required": ["path"]}},
 ]
 
+OPENAI_TOOLS = [
+    {"type": "function", "function": {
+        "name": t["name"], "description": t["description"], "parameters": t["input_schema"]}}
+    for t in TOOLS
+]
+
+
+def _blocked_secret_paths():
+    paths = {os.path.realpath(os.path.join(BASE, "config.json")),
+             os.path.realpath(os.path.expanduser(DEFAULT_LOCAL_KEY_FILE))}
+    try:
+        cfg_path = load_config().get("local_api_key_file")
+        if cfg_path:
+            paths.add(os.path.realpath(os.path.expanduser(cfg_path)))
+    except Exception:  # noqa: BLE001
+        pass
+    return paths
+
 
 def _safe_path(p):
     p = os.path.realpath(os.path.expanduser(p))
     if not p.startswith(HOME):
         raise ValueError("acesso permitido apenas dentro da pasta do usuário")
-    if p == os.path.realpath(os.path.join(BASE, "config.json")):
+    if p in _blocked_secret_paths():
         raise ValueError("este arquivo é confidencial")
     return p
 
@@ -93,6 +116,35 @@ def run_tool(name, args):
 def load_config():
     with open(os.path.join(BASE, "config.json"), encoding="utf-8") as f:
         return json.load(f)
+
+
+def _provider(cfg):
+    return (cfg.get("provider") or "anthropic").strip().lower()
+
+
+def _read_local_api_key(cfg):
+    path = os.path.expanduser(cfg.get("local_api_key_file") or DEFAULT_LOCAL_KEY_FILE)
+    try:
+        return open(path, encoding="utf-8").read().strip()
+    except OSError:
+        return ""
+
+
+def _resolve_local_model(cfg, base_url, api_key):
+    model = (cfg.get("local_model") or "").strip()
+    if model:
+        return model
+    try:
+        req = urllib.request.Request(
+            base_url.rstrip("/") + "/models",
+            headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+        )
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = json.loads(r.read())
+        ids = [m.get("id") for m in data.get("data", []) if m.get("id")]
+        return ids[0] if ids else ""
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def load_notes():
@@ -153,6 +205,90 @@ def call_anthropic(cfg, messages):
     return '{"answer": "Explorei demais os arquivos e me perdi na biblioteca, senhora. Refaça a pergunta com mais pistas.", "nodes": []}'
 
 
+def _openai_chat(base_url, api_key, payload):
+    headers = {"content-type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    req = urllib.request.Request(
+        base_url.rstrip("/") + "/chat/completions",
+        data=json.dumps(payload).encode(),
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=180) as r:
+        return json.loads(r.read())
+
+
+def call_local(cfg, messages):
+    """OpenAI-compatible agent loop against local llama-server (:11434)."""
+    base_url = (cfg.get("local_base_url") or "http://127.0.0.1:11434/v1").rstrip("/")
+    api_key = _read_local_api_key(cfg)
+    model = _resolve_local_model(cfg, base_url, api_key)
+    if not model:
+        return ('{"answer": "O cérebro local não está disponível, senhora — '
+                'nenhum modelo em :11434. Verifique o llama-server.", "nodes": []}')
+
+    # Flatten Anthropic-style history (list content / images) to plain strings.
+    flat = []
+    for m in messages:
+        role = m["role"]
+        content = m["content"]
+        if isinstance(content, list):
+            content = " ".join(
+                b.get("text", "") for b in content if isinstance(b, dict)
+            ) or "(imagem omitida)"
+        flat.append({"role": role, "content": content})
+
+    local_msgs = [{"role": "system", "content": SYSTEM_PROMPT}] + flat
+
+    try:
+        for _ in range(8):
+            data = _openai_chat(base_url, api_key, {
+                "model": model,
+                "max_tokens": 900,
+                "messages": local_msgs,
+                "tools": OPENAI_TOOLS,
+                "tool_choice": "auto",
+            })
+            msg = data["choices"][0]["message"]
+            tool_calls = msg.get("tool_calls") or []
+            if not tool_calls:
+                return (msg.get("content") or "").strip()
+            local_msgs.append({
+                "role": "assistant",
+                "content": msg.get("content"),
+                "tool_calls": tool_calls,
+            })
+            for tc in tool_calls:
+                fn = tc.get("function") or {}
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                out = run_tool(fn.get("name", ""), args)
+                local_msgs.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id", ""),
+                    "content": str(out),
+                })
+        return ('{"answer": "Explorei demais os arquivos e me perdi na biblioteca, '
+                'senhora. Refaça a pergunta com mais pistas.", "nodes": []}')
+    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, IndexError, TimeoutError) as e:
+        # Tools / schema often fail on smaller local models — answer from notes only.
+        try:
+            data = _openai_chat(base_url, api_key, {
+                "model": model,
+                "max_tokens": 900,
+                "messages": local_msgs,
+            })
+            return (data["choices"][0]["message"].get("content") or "").strip()
+        except Exception as e2:  # noqa: BLE001
+            return json.dumps({
+                "answer": f"Cérebro local indisponível, senhora: {e2 or e}",
+                "nodes": [],
+            }, ensure_ascii=False)
+
+
 def call_claude_cli(messages):
     convo = "\n\n".join(f'[{m["role"]}]\n{m["content"]}' for m in messages)
     out = subprocess.run(
@@ -183,7 +319,16 @@ def handle_chat(question, image=None):
     ) or "(nenhuma nota relevante encontrada)"
 
     user_text = f"NOTAS RELEVANTES:\n{context}\n\nPERGUNTA: {question}"
-    if image:  # frame da tela compartilhada (base64 jpeg)
+    cfg = load_config()
+    provider = _provider(cfg)
+
+    if image and provider == "local":
+        return {
+            "answer": "Estou cego localmente, senhora — o cérebro em :11434 não vê imagens.",
+            "nodes": [],
+        }
+
+    if image:  # frame da tela compartilhada (base64 jpeg) — só Anthropic
         content = [
             {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image}},
             {"type": "text", "text": user_text + "\n(A imagem é a tela que estou vendo agora.)"},
@@ -197,8 +342,9 @@ def handle_chat(question, image=None):
     HISTORY.append({"role": "user", "content": content})
     del HISTORY[:-MAX_HISTORY]
 
-    cfg = load_config()
-    if cfg["api_key"].startswith("PUT-YOUR"):
+    if provider == "local":
+        raw = call_local(cfg, [m for m in HISTORY if isinstance(m["content"], str)])
+    elif cfg.get("api_key", "").startswith("PUT-YOUR"):
         if image:
             return {"answer": "Para eu enxergar sua tela, senhora, preciso da API key no config.json — o fallback é cego.", "nodes": []}
         raw = call_claude_cli([m for m in HISTORY if isinstance(m["content"], str)])
@@ -248,7 +394,10 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/settings":
             cfg = load_config()
             # só dados inofensivos — a key jamais sai daqui
-            self._json({"wake_word": cfg.get("wake_word", "jarvis")})
+            self._json({
+                "wake_word": cfg.get("wake_word", "jarvis"),
+                "provider": _provider(cfg),
+            })
         else:
             super().do_GET()
 
@@ -271,5 +420,9 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"Jarvis de prontidão em http://localhost:{PORT} (abra no Chrome)")
+    cfg = load_config()
+    prov = _provider(cfg)
+    print(f"Jarvis de prontidão em http://localhost:{PORT} (abra no Chrome) — provider={prov}")
+    if prov == "local":
+        print(f"  local brain → {cfg.get('local_base_url', 'http://127.0.0.1:11434/v1')}")
     HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
