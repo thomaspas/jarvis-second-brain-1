@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<title>Jarvis — Galáxia do Conhecimento</title>
+<title>Jarvis — Ο Γαλαξίας της Γνώσης</title>
 <style>
   html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:-apple-system,'Segoe UI',sans-serif;color:#cfe8ff}
   #graph{position:absolute;inset:0}
@@ -34,8 +34,8 @@
 <div id="answer"></div>
 <div id="status"></div>
 <div id="bar">
-  <input id="q" placeholder="Pergunte à sua galáxia, senhora…" autocomplete="off">
-  <button id="mic" title="Falar">🎙</button>
+  <input id="q" placeholder="Ρωτήστε τον γαλαξία σας, κύριε…" autocomplete="off">
+  <button id="mic" title="Μίλα">🎙</button>
   <button id="hf" title="Mãos livres: palavra-chave ou duas palmas">👂</button>
   <button id="scr" title="Compartilhar tela com o Jarvis">🖥</button>
   <button id="send" title="Enviar">➤</button>
@@ -165,7 +165,7 @@ document.addEventListener('pointerdown',()=>{ if(!audioReady){audioReady=true;
 // boot greeting
 let greeted=false;
 document.addEventListener('pointerdown',()=>{ if(!greeted){greeted=true;
-  const msg=`Boa noite, senhora. ${GRAPH.nodes.length} notas indexadas, todas presentes e devidamente contabilizadas.`;
+  const msg=`Καλησπέρα, κύριε. ${GRAPH.nodes.length} σημειώσεις καταχωρημένες, όλες παρούσες και δεόντως καταμετρημένες.`;
   setTimeout(()=>{showAnswer(msg);speak(msg);},300);} },{once:true});
 
 function setStatus(t){const s=document.getElementById('status');s.textContent=t;s.classList.toggle('on',!!t);}
@@ -174,7 +174,7 @@ function showAnswer(t){const a=document.getElementById('answer');a.textContent=t
 
 async function ask(question){
   if(!question.trim())return;
-  setStatus('● pensando…');orbState='thinking';
+  setStatus('● σκέφτομαι…');orbState='thinking';
   try{
     const payload={question};
     const img=await grabScreenFrame(question);
@@ -189,7 +189,7 @@ async function ask(question){
     }
     if(d.nodes&&d.nodes.length>=4){lightCluster(d.nodes);}
     else if(d.nodes&&d.nodes.length){const n=data.nodes.find(x=>x.id===d.nodes[0]);if(n)flyTo(n,true);}
-  }catch(e){setStatus('');orbState='idle';showAnswer('O servidor não respondeu, senhora. Ele ainda está de pé?');}
+  }catch(e){setStatus('');orbState='idle';showAnswer('Ο διακομιστής δεν απάντησε, κύριε. Είναι ακόμη ενεργός;');}
 }
 function bornStar(d){
   const nb=d.neighbor!=null?data.nodes.find(n=>n.id===d.neighbor):null;
@@ -213,10 +213,10 @@ if('webkitSpeechRecognition' in window){
   rec=new webkitSpeechRecognition();rec.lang='pt-BR';rec.interimResults=false;
   rec.onresult=e=>{const t=e.results[0][0].transcript;q.value=t;setStatus('');ask(t);q.value='';};
   rec.onend=()=>{micBtn.classList.remove('rec');if(orbState==='listening')orbState='idle';if(!q.value)setStatus('');};
-  rec.onerror=()=>{setStatus('');orbState='idle';micBtn.classList.remove('rec');showAnswer('O microfone se recusou a cooperar, senhora. Verifique a permissão no Chrome.');};
-  micBtn.onclick=()=>{speechSynthesis.cancel();micBtn.classList.add('rec');setStatus('● escutando…');orbState='listening';rec.start();};
+  rec.onerror=()=>{setStatus('');orbState='idle';micBtn.classList.remove('rec');showAnswer('Το μικρόφωνο αρνήθηκε να συνεργαστεί, κύριε. Ελέγξτε την άδεια στο Chrome.');};
+  micBtn.onclick=()=>{speechSynthesis.cancel();micBtn.classList.add('rec');setStatus('● ακούω…');orbState='listening';rec.start();};
 }else{
-  micBtn.onclick=()=>showAnswer('Este navegador não tem reconhecimento de voz — use o Chrome, senhora.');
+  micBtn.onclick=()=>showAnswer('Αυτός ο browser δεν υποστηρίζει αναγνώριση φωνής — χρησιμοποιήστε Chrome, κύριε.');
 }
 
 // ---------- compartilhamento de tela ----------
@@ -224,14 +224,14 @@ let screenStream=null,screenVideo=null;
 const scrBtn=document.getElementById('scr');
 scrBtn.onclick=async()=>{
   if(screenStream){screenStream.getTracks().forEach(t=>t.stop());screenStream=null;scrBtn.classList.remove('on');
-    showAnswer('Deixei de ver sua tela, senhora.');return;}
+    showAnswer('Δεν βλέπω πλέον την οθόνη σας, κύριε.');return;}
   try{
     screenStream=await navigator.mediaDevices.getDisplayMedia({video:true});
     screenVideo=document.createElement('video');screenVideo.srcObject=screenStream;await screenVideo.play();
     screenStream.getVideoTracks()[0].onended=()=>{screenStream=null;scrBtn.classList.remove('on');};
     scrBtn.classList.add('on');
-    const m='Vejo sua tela agora, senhora. Pergunte quando quiser.';showAnswer(m);speak(m);
-  }catch(e){showAnswer('Compartilhamento cancelado, senhora.');}
+    const m='Βλέπω τώρα την οθόνη σας, κύριε. Ρωτήστε ό,τι θέλετε.';showAnswer(m);speak(m);
+  }catch(e){showAnswer('Η κοινή χρήση ακυρώθηκε, κύριε.');}
 };
 const SCREEN_WORDS=/\b(tela|screen|vendo|olha|olhando|enxerga|aba|janela)\b/i;
 async function grabScreenFrame(question){
@@ -251,7 +251,7 @@ function norm(s){return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
 function wakeUp(){ // ativado por palavra-chave ou palmas
   if(speechSynthesis.speaking)speechSynthesis.cancel();
   awaiting=true;orbState='listening';setStatus('● às ordens…');
-  speak('Sim, senhora?');
+  speak('Μάλιστα, κύριε;');
   clearTimeout(awaitTimer);awaitTimer=setTimeout(()=>{awaiting=false;orbState='idle';setStatus('');},12000);
 }
 if('webkitSpeechRecognition' in window){
@@ -268,7 +268,7 @@ if('webkitSpeechRecognition' in window){
   };
   hfRec.onend=()=>{if(hfOn)try{hfRec.start();}catch(e){}}; // religa sozinho
   hfRec.onerror=e=>{if(e.error==='not-allowed'){hfOn=false;hfBtn.classList.remove('on');
-    showAnswer('Preciso da permissão do microfone para o modo mãos livres, senhora.');}};
+    showAnswer('Χρειάζομαι την άδεια του μικροφώνου για τη λειτουργία ανοιχτής ακρόασης, κύριε.');}};
 }
 // detector de palmas: dois picos de volume próximos
 let clapCtx=null;
@@ -293,16 +293,16 @@ async function startClaps(){
   })();
 }
 hfBtn.onclick=async()=>{
-  if(!hfRec){showAnswer('Modo mãos livres só no Chrome, senhora.');return;}
+  if(!hfRec){showAnswer('Η ανοιχτή ακρόαση λειτουργεί μόνο στο Chrome, κύριε.');return;}
   hfOn=!hfOn;hfBtn.classList.toggle('on',hfOn);
   if(hfOn){
     try{hfRec.start();}catch(e){}
     try{await startClaps();}catch(e){/* sem palmas, palavra-chave ainda funciona */}
-    const m=`Mãos livres ligado, senhora. Diga "${WAKE}" ou bata duas palmas.`;showAnswer(m);speak(m);
+    const m=`Ανοιχτή ακρόαση ενεργή, κύριε. Πείτε "${WAKE}" ή χτυπήστε δύο φορές παλαμάκια.`;showAnswer(m);speak(m);
   }else{
     try{hfRec.stop();}catch(e){}
     setStatus('');awaiting=false;orbState='idle';
-    showAnswer('Mãos livres desligado, senhora.');
+    showAnswer('Ανοιχτή ακρόαση απενεργοποιημένη, κύριε.');
   }
 };
 </script>
