@@ -32,6 +32,7 @@
 - **Brain** `llama-server.service` → llama.cpp Vulkan σε `127.0.0.1:11434`.
 - Και τα δύο `Restart=always` + `enabled` → reboot-safe & crash-safe (M2 done).
 - Υγεία με μια ματιά: `GET /health` → `{status, brain_up, model, notes_count}`.
+- **Bind policy (2026-09-03):** `4700` και `11434` ΜΟΝΟ σε `127.0.0.1`. Απο αλλο μηχανημα: ssh tunnel. Override: `JARVIS_BIND` και `LLM_HOST`.
 - **Bind policy (2026-09-03):** `4700` και `11434` ΜΟΝΟ σε `127.0.0.1`. Για προσβαση απο αλλο μηχανημα χρησιμοποιησε ssh tunnel ή `tailscale serve`, ΠΟΤΕ `0.0.0.0`. Override: `JARVIS_BIND` env var + `LLM_HOST` στο drop-in `bind.conf`.
 
 ## Κανόνες για κάθε AI
