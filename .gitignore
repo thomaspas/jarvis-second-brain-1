@@ -4,3 +4,16 @@ viewer/graph-data.js
 config.json
 __pycache__/
 .DS_Store
+
+# ---- Jarvis local artifacts (added 2026-09-02) ----
+# Backups από sed/patch edits — ΠΟΤΕ στο repo
+*.bak
+*.bak-*
+# Runtime logs
+server.log
+*.log
+# Secrets / config (ποτέ στο repo)
+config.json
+# Python cache
+__pycache__/
+*.pyc
