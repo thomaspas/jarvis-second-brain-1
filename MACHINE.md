@@ -12,7 +12,7 @@
 ## Λειτουργικό
 - **Ubuntu 24.04.4 LTS (Noble Numbat)** — στάνταρ Ubuntu, ΟΧΙ εξωτικό distro, αλλά
   στημένο ως **AI server**, γι' αυτό «ιδιαίτερο» στην πράξη�:
-- **HEADLESS** — ΚΑΝΕΝΑ γραφικό περιβάλλον (`XDG_CURRENT_DESKTOP` κενό,
+- **ΓΡΑΦΙΚΟ ΠΕΡΙΒΑΛΛΟΝ:** τρέχει GNOME Shell (Wayland) + xrdp στο `:3389`. Η παλιά σημείωση περι HEADLESS ηταν λαθος. Ο browser δουλευει μεσω RDP session.
   `XDG_SESSION_TYPE=tty`). Μόνο terminal. → Γι' αυτό το `desktop/jarvis.py` (GTK/QT)
   ΚΡΑΣΑΡΕΙ εδώ· χρησιμοποιούμε τη **web** έκδοση (browser).
 - **Kernel 7.0.0-30-generic** — πολύ νεότερος από τον στάνταρ 6.8 του 24.04
@@ -27,11 +27,12 @@
 
 ## Δικτύωση & υπηρεσίες
 - LAN IP `192.168.1.9`. SSH ενεργό (μπαίνει π.χ. από Gaming-7).
-- **Galaxy** `jarvis-galaxy.service` → `server.py` σε `0.0.0.0:4700` (σερβίρει HUD +
+- **Galaxy** `jarvis-galaxy.service` → `server.py` σε `127.0.0.1:4700` (loopback, βλ. JARVIS_BIND) (σερβίρει HUD +
   viewer/, endpoints `/chat`, `/remember`, `/api/home`, `/health`, `/settings`).
 - **Brain** `llama-server.service` → llama.cpp Vulkan σε `127.0.0.1:11434`.
 - Και τα δύο `Restart=always` + `enabled` → reboot-safe & crash-safe (M2 done).
 - Υγεία με μια ματιά: `GET /health` → `{status, brain_up, model, notes_count}`.
+- **Bind policy (2026-09-03):** `4700` και `11434` ΜΟΝΟ σε `127.0.0.1`. Για προσβαση απο αλλο μηχανημα χρησιμοποιησε ssh tunnel ή `tailscale serve`, ΠΟΤΕ `0.0.0.0`. Override: `JARVIS_BIND` env var + `LLM_HOST` στο drop-in `bind.conf`.
 
 ## Κανόνες για κάθε AI
 - ΔΕΝ έχεις SSH. ΟΛΕΣ οι εντολές τρέχουν ΑΠΟ τον χρήστη πάνω στο EVO-3.

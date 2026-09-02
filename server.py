@@ -22,6 +22,7 @@ VIEWER = os.path.join(BASE, "viewer")
 _cfg = json.load(open(os.path.join(BASE, "config.json"), encoding="utf-8"))
 NOTES_DIR = _cfg.get("notes_dir") or os.path.join(BASE, "notes")
 SKIP_DIRS = {".obsidian", ".smart-env", ".trash", ".git", "node_modules"}
+BIND_HOST = os.environ.get("JARVIS_BIND", "127.0.0.1")
 PORT = 4700
 DEFAULT_LOCAL_KEY_FILE = "/home/thomas-pashoulas/.cursor/deepseek-cursor-api.key"
 
@@ -460,4 +461,4 @@ if __name__ == "__main__":
     print(f"Ο Jarvis σε ετοιμότητα στο http://localhost:{PORT} (άνοιξέ το στο Chrome) — provider={prov}")
     if prov == "local":
         print(f"  local brain → {cfg.get('local_base_url', 'http://127.0.0.1:11434/v1')}")
-    HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    HTTPServer((BIND_HOST, PORT), Handler).serve_forever()
