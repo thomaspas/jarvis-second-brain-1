@@ -21,20 +21,23 @@ Host: EVO (Linux). Not Angelica (`~/jarvis-os`).
 
 - [x] Repo cloned to `/home/thomas-pashoulas/jarvis-second-brain`
 - [x] `config.json` created (gitignored) with `provider: "local"` + `local_*` keys
-- [x] `notes/` directory created (empty)
-- [x] `python3 build.py` → `viewer/graph-data.js` (`0 notas`)
+- [x] `notes/` directory created (sample `.md` notes present)
+- [x] `python3 build.py` → `viewer/graph-data.js`
 - [x] Key file path wired: `local_api_key_file` → `~/.cursor/deepseek-cursor-api.key` (code reads it; never commit contents)
 - [x] Web + desktop code routes `provider: "local"` → `http://127.0.0.1:11434/v1`
+- [x] User systemd: `jarvis-galaxy.service` + `llama-server.service` (enabled, loopback bind)
+- [x] Brain running via `bin/start-brain.sh` (drop-in overrides base unit; `bin/start-llama-server.sh` → symlink)
+- [x] `/health` reports `brain_up` + configured `local_model`
 
 ## Local brain (required for chat without cloud LLMs)
 
-- [ ] **Start llama-server on `:11434`** — currently crash-looping: systemd unit calls missing `~/jarvis-os/bin/start-llama-server.sh` (status 203/EXEC). Fix/restore that wrapper or start `~/ai_stack/llama.cpp/build/bin/llama-server` manually.
-- [ ] Confirm `/v1/models` returns at least one id, then set `"local_model"` in repo `config.json` (and optionally `~/.jarvis/config.json` for desktop).
-- [ ] Key file present at `local_api_key_file` (exists on EVO; do not paste into chat).
-- [ ] Point `"notes_dir"` at a markdown vault, **or** drop `.md` files into `notes/`
+- [x] **llama-server on `:11434`** — active (`LLM_HOST=127.0.0.1`)
+- [x] `/v1/models` returns model id; `"local_model"` set in repo `config.json`
+- [x] Key file present at `local_api_key_file` (exists on EVO; do not paste into chat)
+- [ ] Point `"notes_dir"` at a real markdown vault if you want more than `notes/`, **or** keep adding `.md` under `notes/`
 - [ ] Re-run `python3 build.py` after adding notes
-- [ ] Restart `server.py` after config/notes changes
-- [ ] Open `http://127.0.0.1:4700` and try a chat turn
+- [ ] After `server.py` / config changes: `systemctl --user restart jarvis-galaxy.service`
+- [ ] Open `http://127.0.0.1:4700` and try a chat turn (local 27B can take ~30–90s+ per turn)
 
 When `provider` is `local`: no Anthropic calls, no `claude -p` fallback, screen/images are blind (text-only).
 
@@ -69,7 +72,9 @@ These still touch the network even when the LLM is local:
 ```bash
 cd /home/thomas-pashoulas/jarvis-second-brain
 python3 build.py
-python3 server.py   # then open http://127.0.0.1:4700
+systemctl --user restart jarvis-galaxy.service   # preferred on EVO
+# or: python3 server.py
+# then open http://127.0.0.1:4700
 ```
 
 Smoke local LLM (after `:11434` is up):
@@ -77,6 +82,7 @@ Smoke local LLM (after `:11434` is up):
 ```bash
 # fill local_model from GET http://127.0.0.1:11434/v1/models first
 curl -sS http://127.0.0.1:11434/v1/models -H "Authorization: Bearer $(tr -d '\n' < ~/.cursor/deepseek-cursor-api.key)" | head -c 200
+curl -sS http://127.0.0.1:4700/health
 ```
 
-Stop server: find PID on `:4700` (`ss -ltnp | rg 4700`) and `kill <pid>`.
+Stop server: `systemctl --user stop jarvis-galaxy.service` (or find PID on `:4700` and `kill`).

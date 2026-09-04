@@ -13,9 +13,10 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import urllib.error
 import urllib.request
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 VIEWER = os.path.join(BASE, "viewer")
@@ -27,6 +28,7 @@ PORT = 4700
 DEFAULT_LOCAL_KEY_FILE = "/home/thomas-pashoulas/.cursor/deepseek-cursor-api.key"
 
 HISTORY = []  # σύντομο ιστορικό της συνεδρίας (πλευρά διακομιστή)
+HISTORY_LOCK = threading.Lock()
 MAX_HISTORY = 12
 
 SYSTEM_PROMPT = """Είσαι η Jarvis: μια εξαιρετικά ευγενική, ψύχραιμη και πνευματώδης βοηθός με βρετανικό στυλ, που μιλάει ΠΑΝΤΑ στα ελληνικά. Απευθύνσου στον χρήστη με το «κύριε» πού και πού (όχι σε κάθε πρόταση). Ένα πραγματικά πετυχημένο αστείο αξίζει περισσότερο από τρεις άνοστες προτάσεις.
@@ -330,6 +332,13 @@ def parse_answer(raw, candidates):
 
 
 def handle_chat(question, image=None):
+    question = (question or "").strip()
+    if not question and not image:
+        return {
+            "answer": "Δεν άκουσα ερώτηση, κύριε — πείτε μου τι χρειάζεστε.",
+            "nodes": [],
+        }
+
     notes = load_notes()
     top = score_notes(question, notes)
     context = "\n\n".join(
@@ -353,22 +362,28 @@ def handle_chat(question, image=None):
         ]
     else:
         content = user_text
-    # οι παλιές εικόνες φεύγουν από το ιστορικό (ζυγίζουν πολύ στα tokens)
-    for m in HISTORY:
-        if isinstance(m["content"], list):
-            m["content"] = " ".join(b.get("text", "(εικόνα οθόνης)") for b in m["content"])
-    HISTORY.append({"role": "user", "content": content})
-    del HISTORY[:-MAX_HISTORY]
+
+    with HISTORY_LOCK:
+        # οι παλιές εικόνες φεύγουν από το ιστορικό (ζυγίζουν πολύ στα tokens)
+        for m in HISTORY:
+            if isinstance(m["content"], list):
+                m["content"] = " ".join(b.get("text", "(εικόνα οθόνης)") for b in m["content"])
+        HISTORY.append({"role": "user", "content": content})
+        del HISTORY[:-MAX_HISTORY]
+        history_snapshot = list(HISTORY)
 
     if provider == "local":
-        raw = call_local(cfg, [m for m in HISTORY if isinstance(m["content"], str)])
+        raw = call_local(cfg, [m for m in history_snapshot if isinstance(m["content"], str)])
     elif cfg.get("api_key", "").startswith("PUT-YOUR"):
         if image:
             return {"answer": "Για να βλέπω την οθόνη σας, κύριε, χρειάζομαι το API key στο config.json — η εφεδρεία είναι τυφλή.", "nodes": []}
-        raw = call_claude_cli([m for m in HISTORY if isinstance(m["content"], str)])
+        raw = call_claude_cli([m for m in history_snapshot if isinstance(m["content"], str)])
     else:
-        raw = call_anthropic(cfg, HISTORY)
-    HISTORY.append({"role": "assistant", "content": raw})
+        raw = call_anthropic(cfg, history_snapshot)
+
+    with HISTORY_LOCK:
+        HISTORY.append({"role": "assistant", "content": raw})
+        del HISTORY[:-MAX_HISTORY]
     return parse_answer(raw, top)
 
 
@@ -461,4 +476,7 @@ if __name__ == "__main__":
     print(f"Ο Jarvis σε ετοιμότητα στο http://localhost:{PORT} (άνοιξέ το στο Chrome) — provider={prov}")
     if prov == "local":
         print(f"  local brain → {cfg.get('local_base_url', 'http://127.0.0.1:11434/v1')}")
-    HTTPServer((BIND_HOST, PORT), Handler).serve_forever()
+    # Threaded: /chat can take minutes on local 27B; must not block HUD/static/health.
+    server = ThreadingHTTPServer((BIND_HOST, PORT), Handler)
+    server.daemon_threads = True
+    server.serve_forever()
