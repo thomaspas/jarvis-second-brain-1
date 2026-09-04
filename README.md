@@ -13,6 +13,8 @@ Two versions live in this repo:
 | **Desktop (recommended)** — `desktop/` | System-wide daemon: wake word, offline speech-to-text, neural voice, floating always-on-top orb, shell + screen + notes + memory tools | Python 3.10+, an Anthropic API key |
 | **Web galaxy** — `viewer/` + `server.py` | 3D knowledge galaxy of your notes in Chrome with voice chat and fly-to-source camera | Python 3, Chrome |
 
+**Collaboration / development guide:** [docs/COLLABORATION.md](docs/COLLABORATION.md) (from the shared Collaboration Plan). EVO machine notes: [MACHINE.md](MACHINE.md).
+
 ## The stack (all open source except the brain)
 
 - [openWakeWord](https://github.com/dscripka/openWakeWord) — "Hey Jarvis" detection, fully offline

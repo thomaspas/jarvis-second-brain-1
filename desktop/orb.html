@@ -20,6 +20,7 @@
 <canvas id="orb" width="340" height="340" style="width:170px;height:170px"></canvas>
 <button id="gear" title="Cérebro">⚙</button>
 <div id="menu">
+  <button id="pick-local">Local (:11434)</button>
   <button id="pick-anthropic">Anthropic</button>
   <button id="pick-nvidia">Grátis (NVIDIA)</button>
   <div class="label" id="menu-status"></div>
@@ -155,16 +156,20 @@ canvas.addEventListener('pointermove',e=>{
 canvas.addEventListener('pointerup',()=>clearTimeout(quitTimer));
 canvas.addEventListener('pointerleave',()=>clearTimeout(quitTimer));
 
-// ---------------- brain switch (Anthropic <-> free NVIDIA) ----------------
+// ---------------- brain switch (local / Anthropic / NVIDIA) ----------------
 const gear=document.getElementById('gear'),menu=document.getElementById('menu');
-const btnA=document.getElementById('pick-anthropic'),btnN=document.getElementById('pick-nvidia');
+const btnL=document.getElementById('pick-local'),btnA=document.getElementById('pick-anthropic'),btnN=document.getElementById('pick-nvidia');
 const menuStatus=document.getElementById('menu-status');
 async function refreshProviderUI(){
   try{
     const s=await window.pywebview.api.get_provider();
+    btnL.classList.toggle('active',s.provider==='local');
     btnA.classList.toggle('active',s.provider==='anthropic');
     btnN.classList.toggle('active',s.provider==='nvidia');
-    menuStatus.textContent=s.nvidia_ready?'':'(sem chave NVIDIA)';
+    const hints=[];
+    if(!s.local_ready)hints.push('sem chave local');
+    if(!s.nvidia_ready)hints.push('sem chave NVIDIA');
+    menuStatus.textContent=hints.join(' · ');
   }catch(e){}
 }
 gear.addEventListener('click',e=>{
@@ -175,9 +180,11 @@ gear.addEventListener('click',e=>{
 async function pick(provider){
   const r=await window.pywebview.api.set_provider(provider);
   if(r==='no_nvidia_key'){menuStatus.textContent='Adicione nvidia_api_key no config.json';return;}
+  if(r==='no_local_key'){menuStatus.textContent='Falta local_api_key_file';return;}
   await refreshProviderUI();
   setTimeout(()=>menu.classList.remove('open'),500);
 }
+btnL.addEventListener('click',e=>{e.stopPropagation();pick('local');});
 btnA.addEventListener('click',e=>{e.stopPropagation();pick('anthropic');});
 btnN.addEventListener('click',e=>{e.stopPropagation();pick('nvidia');});
 </script>

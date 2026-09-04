@@ -1,66 +1,92 @@
 #!/usr/bin/env python3
-"""Servidor do Jarvis: serve viewer/ e expõe /chat e /remember.
+"""Διακομιστής του Jarvis: σερβίρει το viewer/ και εκθέτει /chat και /remember.
 
-Só biblioteca padrão. A API key vive em config.json (fora de viewer/)
-e nunca é enviada ao navegador. Se a key ainda for o placeholder,
-o /chat cai para `claude -p` (usa sua assinatura do Claude Code).
+Μόνο τυπική βιβλιοθήκη. Το API key βρίσκεται στο config.json (εκτός του viewer/)
+και δεν αποστέλλεται ποτέ στον browser.
+
+provider=local → OpenAI-compatible http://127.0.0.1:11434/v1 (sem Anthropic /
+claude -p). Caso contrário: Anthropic API, ou fallback `claude -p` se a key
+ainda for o placeholder.
 """
 import json
 import os
 import re
 import subprocess
 import sys
+import threading
+import urllib.error
 import urllib.request
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 VIEWER = os.path.join(BASE, "viewer")
 _cfg = json.load(open(os.path.join(BASE, "config.json"), encoding="utf-8"))
 NOTES_DIR = _cfg.get("notes_dir") or os.path.join(BASE, "notes")
 SKIP_DIRS = {".obsidian", ".smart-env", ".trash", ".git", "node_modules"}
+BIND_HOST = os.environ.get("JARVIS_BIND", "127.0.0.1")
 PORT = 4700
+DEFAULT_LOCAL_KEY_FILE = "/home/thomas-pashoulas/.cursor/deepseek-cursor-api.key"
 
-HISTORY = []  # histórico curto da sessão (lado servidor)
+HISTORY = []  # σύντομο ιστορικό της συνεδρίας (πλευρά διακομιστή)
+HISTORY_LOCK = threading.Lock()
 MAX_HISTORY = 12
 
-SYSTEM_PROMPT = """Você é Jarvis: um mordomo britânico impecavelmente educado, seco e de humor afiado, falando em português do Brasil. Chame a usuária de "senhora" de vez em quando (não em toda frase). Uma tirada genuinamente engraçada vale mais que três frases sem graça.
+SYSTEM_PROMPT = """Είσαι η Jarvis: μια εξαιρετικά ευγενική, ψύχραιμη και πνευματώδης βοηθός με βρετανικό στυλ, που μιλάει ΠΑΝΤΑ στα ελληνικά. Απευθύνσου στον χρήστη με το «κύριε» πού και πού (όχι σε κάθε πρόταση). Ένα πραγματικά πετυχημένο αστείο αξίζει περισσότερο από τρεις άνοστες προτάσεις.
 
-Você tem ferramentas para ler arquivos do computador da usuária (somente leitura). Use-as quando a pergunta envolver documentos, pastas ou arquivos que não estejam nas notas fornecidas. Não invente conteúdo de arquivo: se não encontrou, diga.
+Έχεις εργαλεία για να διαβάζεις αρχεία από τον υπολογιστή του χρήστη (μόνο ανάγνωση). Χρησιμοποίησέ τα όταν η ερώτηση αφορά έγγραφα, φακέλους ή αρχεία που δεν υπάρχουν στις παρεχόμενες σημειώσεις. Μην επινοείς περιεχόμενο αρχείου: αν δεν το βρήκες, πες το.
 
-Regras:
-- Respostas curtas: UMA frase espirituosa + os fatos, em 2-3 frases no total. Nunca recite notas ou arquivos de volta — resuma.
-- Perguntas sobre as notas: responda a partir das notas fornecidas. Se não cobrirem, procure nos arquivos ou admita com elegância.
-- Papo furado e piadas: responda com graça, sem citar notas nem usar ferramentas.
-- Sua resposta FINAL deve ser SEMPRE JSON válido: {"answer": "...", "nodes": [ids das notas usadas], "smalltalk": true/false}. Se não usou nenhuma nota, "nodes" fica vazio."""
+Κανόνες:
+- Σύντομες απαντήσεις: ΜΙΑ πνευματώδης φράση + τα γεγονότα, 2-3 προτάσεις συνολικά. Ποτέ μην απαγγέλλεις σημειώσεις ή αρχεία αυτούσια — σύνοψέ τα.
+- Ερωτήσεις για τις σημειώσεις: απάντησε από τις παρεχόμενες σημειώσεις. Αν δεν καλύπτουν, ψάξε στα αρχεία ή παραδέξου το με κομψότητα.
+- Κουβεντούλα και αστεία: απάντησε με χάρη, χωρίς να αναφέρεις σημειώσεις ή εργαλεία.
+- Η ΤΕΛΙΚΗ σου απάντηση πρέπει ΠΑΝΤΑ να είναι έγκυρο JSON: {"answer": "...", "nodes": [ids των σημειώσεων που χρησιμοποιήθηκαν], "smalltalk": true/false}. Αν δεν χρησιμοποίησες καμία σημείωση, το "nodes" μένει κενό."""
 
 HOME = os.path.expanduser("~")
 
 TOOLS = [
     {"name": "list_files",
-     "description": "Lista arquivos e subpastas de uma pasta do computador. Caminhos comuns: ~/Desktop, ~/Documents, ~/Downloads e o vault de notas.",
+     "description": "Παραθέτει αρχεία και υποφακέλους ενός φακέλου. Συνήθεις διαδρομές: ~/Desktop, ~/Documents, ~/Downloads και ο φάκελος σημειώσεων.",
      "input_schema": {"type": "object", "properties": {
-         "path": {"type": "string", "description": "Caminho absoluto da pasta (pode usar ~)"}},
+         "path": {"type": "string", "description": "Απόλυτη διαδρομή του φακέλου (μπορείς να βάλεις ~)"}},
          "required": ["path"]}},
     {"name": "search_files",
-     "description": "Procura arquivos pelo nome (busca recursiva, sem diferenciar maiúsculas) a partir de uma pasta raiz.",
+     "description": "Αναζητά αρχεία με βάση το όνομα (αναδρομικά, χωρίς διάκριση πεζών-κεφαλαίων) από έναν ριζικό φάκελο.",
      "input_schema": {"type": "object", "properties": {
-         "root": {"type": "string", "description": "Pasta raiz da busca (pode usar ~)"},
-         "query": {"type": "string", "description": "Trecho do nome do arquivo"}},
+         "root": {"type": "string", "description": "Ριζικός φάκελος αναζήτησης (μπορείς να βάλεις ~)"},
+         "query": {"type": "string", "description": "Τμήμα του ονόματος του αρχείου"}},
          "required": ["root", "query"]}},
     {"name": "read_file",
-     "description": "Lê o conteúdo de um arquivo de texto (md, txt, csv, json, código). Retorna até 6000 caracteres.",
+     "description": "Διαβάζει το περιεχόμενο ενός αρχείου κειμένου (md, txt, csv, json, κώδικας). Επιστρέφει έως 6000 χαρακτήρες.",
      "input_schema": {"type": "object", "properties": {
-         "path": {"type": "string", "description": "Caminho absoluto do arquivo (pode usar ~)"}},
+         "path": {"type": "string", "description": "Απόλυτη διαδρομή του αρχείου (μπορείς να βάλεις ~)"}},
          "required": ["path"]}},
 ]
+
+OPENAI_TOOLS = [
+    {"type": "function", "function": {
+        "name": t["name"], "description": t["description"], "parameters": t["input_schema"]}}
+    for t in TOOLS
+]
+
+
+def _blocked_secret_paths():
+    paths = {os.path.realpath(os.path.join(BASE, "config.json")),
+             os.path.realpath(os.path.expanduser(DEFAULT_LOCAL_KEY_FILE))}
+    try:
+        cfg_path = load_config().get("local_api_key_file")
+        if cfg_path:
+            paths.add(os.path.realpath(os.path.expanduser(cfg_path)))
+    except Exception:  # noqa: BLE001
+        pass
+    return paths
 
 
 def _safe_path(p):
     p = os.path.realpath(os.path.expanduser(p))
     if not p.startswith(HOME):
-        raise ValueError("acesso permitido apenas dentro da pasta do usuário")
-    if p == os.path.realpath(os.path.join(BASE, "config.json")):
-        raise ValueError("este arquivo é confidencial")
+        raise ValueError("η πρόσβαση επιτρέπεται μόνο εντός του φακέλου του χρήστη")
+    if p in _blocked_secret_paths():
+        raise ValueError("αυτό το αρχείο είναι εμπιστευτικό")
     return p
 
 
@@ -70,7 +96,7 @@ def run_tool(name, args):
             p = _safe_path(args["path"])
             entries = sorted(os.listdir(p))[:120]
             return "\n".join(("[dir] " if os.path.isdir(os.path.join(p, e)) else "") + e
-                             for e in entries if not e.startswith(".")) or "(pasta vazia)"
+                             for e in entries if not e.startswith(".")) or "(άδειος φάκελος)"
         if name == "search_files":
             root, q = _safe_path(args["root"]), args["query"].lower()
             hits = []
@@ -83,16 +109,62 @@ def run_tool(name, args):
         if name == "read_file":
             p = _safe_path(args["path"])
             if os.path.getsize(p) > 5_000_000:
-                return "(arquivo grande demais)"
+                return "(αρχείο πολύ μεγάλο)"
             return open(p, encoding="utf-8", errors="ignore").read()[:6000]
         return f"(ferramenta desconhecida: {name})"
     except Exception as e:  # noqa: BLE001
         return f"(erro: {e})"
 
 
+def load_home_data():
+    """Reads a user-controlled notes/home.json. Missing/invalid -> empty widgets."""
+    empty = {"agenda": [], "tasks": {"open": 0, "items": []}, "study": [],
+             "outreach": {"sent": 0, "positives": 0, "negatives": 0}}
+    path = os.path.join(NOTES_DIR, "home.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            return empty
+        for k, v in empty.items():
+            data.setdefault(k, v)
+        return data
+    except Exception:
+        return empty
+
+
 def load_config():
     with open(os.path.join(BASE, "config.json"), encoding="utf-8") as f:
         return json.load(f)
+
+
+def _provider(cfg):
+    return (cfg.get("provider") or "anthropic").strip().lower()
+
+
+def _read_local_api_key(cfg):
+    path = os.path.expanduser(cfg.get("local_api_key_file") or DEFAULT_LOCAL_KEY_FILE)
+    try:
+        return open(path, encoding="utf-8").read().strip()
+    except OSError:
+        return ""
+
+
+def _resolve_local_model(cfg, base_url, api_key):
+    model = (cfg.get("local_model") or "").strip()
+    if model:
+        return model
+    try:
+        req = urllib.request.Request(
+            base_url.rstrip("/") + "/models",
+            headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+        )
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = json.loads(r.read())
+        ids = [m.get("id") for m in data.get("data", []) if m.get("id")]
+        return ids[0] if ids else ""
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def load_notes():
@@ -139,7 +211,7 @@ def _api_call(cfg, messages):
 
 
 def call_anthropic(cfg, messages):
-    """Loop de agente: deixa o modelo usar as ferramentas de arquivo até responder."""
+    """Βρόχος πράκτορα: αφήνει το μοντέλο να χρησιμοποιεί τα εργαλεία αρχείων μέχρι να απαντήσει."""
     local = list(messages)
     for _ in range(8):
         data = _api_call(cfg, local)
@@ -150,7 +222,91 @@ def call_anthropic(cfg, messages):
                     "content": run_tool(b["name"], b["input"])}
                    for b in data["content"] if b["type"] == "tool_use"]
         local.append({"role": "user", "content": results})
-    return '{"answer": "Explorei demais os arquivos e me perdi na biblioteca, senhora. Refaça a pergunta com mais pistas.", "nodes": []}'
+    return '{"answer": "Έψαξα υπερβολικά τα αρχεία και χάθηκα στη βιβλιοθήκη, κύριε. Ξαναδιατυπώστε την ερώτηση με περισσότερες ενδείξεις.", "nodes": []}'
+
+
+def _openai_chat(base_url, api_key, payload):
+    headers = {"content-type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    req = urllib.request.Request(
+        base_url.rstrip("/") + "/chat/completions",
+        data=json.dumps(payload).encode(),
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=180) as r:
+        return json.loads(r.read())
+
+
+def call_local(cfg, messages):
+    """OpenAI-compatible agent loop against local llama-server (:11434)."""
+    base_url = (cfg.get("local_base_url") or "http://127.0.0.1:11434/v1").rstrip("/")
+    api_key = _read_local_api_key(cfg)
+    model = _resolve_local_model(cfg, base_url, api_key)
+    if not model:
+        return ('{"answer": "Ο τοπικός εγκέφαλος δεν είναι διαθέσιμος, κύριε — '
+                'κανένα μοντέλο στο :11434. Έλεγξε τον llama-server.", "nodes": []}')
+
+    # Flatten Anthropic-style history (list content / images) to plain strings.
+    flat = []
+    for m in messages:
+        role = m["role"]
+        content = m["content"]
+        if isinstance(content, list):
+            content = " ".join(
+                b.get("text", "") for b in content if isinstance(b, dict)
+            ) or "(η εικόνα παραλείφθηκε)"
+        flat.append({"role": role, "content": content})
+
+    local_msgs = [{"role": "system", "content": SYSTEM_PROMPT}] + flat
+
+    try:
+        for _ in range(8):
+            data = _openai_chat(base_url, api_key, {
+                "model": model,
+                "max_tokens": 900,
+                "messages": local_msgs,
+                "tools": OPENAI_TOOLS,
+                "tool_choice": "auto",
+            })
+            msg = data["choices"][0]["message"]
+            tool_calls = msg.get("tool_calls") or []
+            if not tool_calls:
+                return (msg.get("content") or "").strip()
+            local_msgs.append({
+                "role": "assistant",
+                "content": msg.get("content"),
+                "tool_calls": tool_calls,
+            })
+            for tc in tool_calls:
+                fn = tc.get("function") or {}
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                out = run_tool(fn.get("name", ""), args)
+                local_msgs.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id", ""),
+                    "content": str(out),
+                })
+        return ('{"answer": "Ψάχτηκα υπερβολικά στα αρχεία και χάθηκα στη βιβλιοθήκη, '
+                'κύριε. Ξαναδιατυπώστε την ερώτηση με περισσότερες ενδείξεις.", "nodes": []}')
+    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, IndexError, TimeoutError) as e:
+        # Tools / schema often fail on smaller local models — answer from notes only.
+        try:
+            data = _openai_chat(base_url, api_key, {
+                "model": model,
+                "max_tokens": 900,
+                "messages": local_msgs,
+            })
+            return (data["choices"][0]["message"].get("content") or "").strip()
+        except Exception as e2:  # noqa: BLE001
+            return json.dumps({
+                "answer": f"Ο τοπικός εγκέφαλος δεν είναι διαθέσιμος, κύριε: {e2 or e}",
+                "nodes": [],
+            }, ensure_ascii=False)
 
 
 def call_claude_cli(messages):
@@ -168,7 +324,7 @@ def parse_answer(raw, candidates):
         data = json.loads(m.group(0)) if m else {}
     except json.JSONDecodeError:
         data = {}
-    answer = data.get("answer") or raw.strip() or "As linhas se cruzaram, senhora. Tente novamente."
+    answer = data.get("answer") or raw.strip() or "Οι γραμμές μπερδεύτηκαν, κύριε. Δοκιμάστε ξανά."
     nodes = [n for n in data.get("nodes", []) if isinstance(n, int)]
     if not nodes and not data.get("smalltalk"):
         nodes = candidates[:1]
@@ -176,35 +332,58 @@ def parse_answer(raw, candidates):
 
 
 def handle_chat(question, image=None):
+    question = (question or "").strip()
+    if not question and not image:
+        return {
+            "answer": "Δεν άκουσα ερώτηση, κύριε — πείτε μου τι χρειάζεστε.",
+            "nodes": [],
+        }
+
     notes = load_notes()
     top = score_notes(question, notes)
     context = "\n\n".join(
         f"[NOTA id={i}] {notes[i]['title']}\n{notes[i]['text'][:1500]}" for i in top
-    ) or "(nenhuma nota relevante encontrada)"
+    ) or "(δεν βρέθηκε σχετική σημείωση)"
 
-    user_text = f"NOTAS RELEVANTES:\n{context}\n\nPERGUNTA: {question}"
-    if image:  # frame da tela compartilhada (base64 jpeg)
+    user_text = f"ΣΧΕΤΙΚΕΣ ΣΗΜΕΙΩΣΕΙΣ:\n{context}\n\nΕΡΩΤΗΣΗ: {question}"
+    cfg = load_config()
+    provider = _provider(cfg)
+
+    if image and provider == "local":
+        return {
+            "answer": "Είμαι τυφλή τοπικά, κύριε — ο εγκέφαλος στο :11434 δεν βλέπει εικόνες.",
+            "nodes": [],
+        }
+
+    if image:  # frame da tela compartilhada (base64 jpeg) — só Anthropic
         content = [
             {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image}},
-            {"type": "text", "text": user_text + "\n(A imagem é a tela que estou vendo agora.)"},
+            {"type": "text", "text": user_text + "\n(Η εικόνα είναι η οθόνη που βλέπω τώρα.)"},
         ]
     else:
         content = user_text
-    # imagens antigas saem do histórico (pesam demais nos tokens)
-    for m in HISTORY:
-        if isinstance(m["content"], list):
-            m["content"] = " ".join(b.get("text", "(imagem da tela)") for b in m["content"])
-    HISTORY.append({"role": "user", "content": content})
-    del HISTORY[:-MAX_HISTORY]
 
-    cfg = load_config()
-    if cfg["api_key"].startswith("PUT-YOUR"):
+    with HISTORY_LOCK:
+        # οι παλιές εικόνες φεύγουν από το ιστορικό (ζυγίζουν πολύ στα tokens)
+        for m in HISTORY:
+            if isinstance(m["content"], list):
+                m["content"] = " ".join(b.get("text", "(εικόνα οθόνης)") for b in m["content"])
+        HISTORY.append({"role": "user", "content": content})
+        del HISTORY[:-MAX_HISTORY]
+        history_snapshot = list(HISTORY)
+
+    if provider == "local":
+        raw = call_local(cfg, [m for m in history_snapshot if isinstance(m["content"], str)])
+    elif cfg.get("api_key", "").startswith("PUT-YOUR"):
         if image:
-            return {"answer": "Para eu enxergar sua tela, senhora, preciso da API key no config.json — o fallback é cego.", "nodes": []}
-        raw = call_claude_cli([m for m in HISTORY if isinstance(m["content"], str)])
+            return {"answer": "Για να βλέπω την οθόνη σας, κύριε, χρειάζομαι το API key στο config.json — η εφεδρεία είναι τυφλή.", "nodes": []}
+        raw = call_claude_cli([m for m in history_snapshot if isinstance(m["content"], str)])
     else:
-        raw = call_anthropic(cfg, HISTORY)
-    HISTORY.append({"role": "assistant", "content": raw})
+        raw = call_anthropic(cfg, history_snapshot)
+
+    with HISTORY_LOCK:
+        HISTORY.append({"role": "assistant", "content": raw})
+        del HISTORY[:-MAX_HISTORY]
     return parse_answer(raw, top)
 
 
@@ -226,7 +405,7 @@ def handle_remember(text):
                      for l in graph["links"] if new_id in (l["source"], l["target"])), None)
     return {"node": next(n for n in graph["nodes"] if n["id"] == new_id),
             "graph": graph, "neighbor": neighbor,
-            "answer": f"Anotado e arquivado, senhora. “{title}” agora brilha na sua galáxia."}
+            "answer": f"Σημειώθηκε και αρχειοθετήθηκε, κύριε. Το «{title}» λάμπει τώρα στον γαλαξία σας."}
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -245,10 +424,31 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path in ("/", ""):
+            self.path = "/home.html"
+        if self.path == "/api/home":
+            self._json(load_home_data())
+            return
+        if self.path == "/health":
+            cfg = load_config()
+            base_url = (cfg.get("local_base_url") or "http://127.0.0.1:11434/v1").rstrip("/")
+            api_key = _read_local_api_key(cfg)
+            model = _resolve_local_model(cfg, base_url, api_key)
+            self._json({
+                "status": "ok" if model else "degraded",
+                "brain_up": bool(model),
+                "model": model or None,
+                "provider": _provider(cfg),
+                "notes_count": len(load_notes()),
+            })
+            return
         if self.path == "/settings":
             cfg = load_config()
-            # só dados inofensivos — a key jamais sai daqui
-            self._json({"wake_word": cfg.get("wake_word", "jarvis")})
+            # μόνο ακίνδυνα δεδομένα — το κλειδί δεν φεύγει ποτέ από εδώ
+            self._json({
+                "wake_word": cfg.get("wake_word", "jarvis"),
+                "provider": _provider(cfg),
+            })
         else:
             super().do_GET()
 
@@ -267,9 +467,16 @@ class Handler(SimpleHTTPRequestHandler):
             else:
                 self._json({"error": "not found"}, 404)
         except Exception as e:  # noqa: BLE001
-            self._json({"answer": f"Um contratempo técnico, senhora: {e}", "nodes": []}, 500)
+            self._json({"answer": f"Ένα τεχνικό απρόοπτο, κύριε: {e}", "nodes": []}, 500)
 
 
 if __name__ == "__main__":
-    print(f"Jarvis de prontidão em http://localhost:{PORT} (abra no Chrome)")
-    HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    cfg = load_config()
+    prov = _provider(cfg)
+    print(f"Ο Jarvis σε ετοιμότητα στο http://localhost:{PORT} (άνοιξέ το στο Chrome) — provider={prov}")
+    if prov == "local":
+        print(f"  local brain → {cfg.get('local_base_url', 'http://127.0.0.1:11434/v1')}")
+    # Threaded: /chat can take minutes on local 27B; must not block HUD/static/health.
+    server = ThreadingHTTPServer((BIND_HOST, PORT), Handler)
+    server.daemon_threads = True
+    server.serve_forever()

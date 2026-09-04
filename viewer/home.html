@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis — Αρχική</title>
+  <style>
+    :root {
+      --ink: #070412;
+      --paper: #F5F2FC;
+      --ash: #8F86A5;
+      --signal: #7C6BFF;
+      --signal-glow: rgba(124, 107, 255, 0.25);
+      --signal-border: rgba(124, 107, 255, 0.4);
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: "SF Mono", Menlo, Consolas, monospace;
+    }
+    html, body {
+      margin: 0; height: 100%;
+      background: var(--ink); color: var(--paper);
+      font-family: var(--font-sans); overflow: hidden;
+      -webkit-user-select: none;
+    }
+    .panel {
+      position: relative; padding: 20px 24px; border-radius: 8px;
+      background: rgba(244, 241, 234, .02);
+      border: 1px solid rgba(244, 241, 234, .08);
+      backdrop-filter: blur(8px); transition: all 0.3s ease;
+    }
+    .panel .glow {
+      position: absolute; inset: 0; border-radius: 8px;
+      border: 1.5px solid var(--signal);
+      box-shadow: 0 0 28px var(--signal-glow);
+      opacity: 0; transition: opacity .3s ease; pointer-events: none;
+    }
+    .mono { font-family: var(--font-mono); }
+    .label {
+      font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em;
+      text-transform: uppercase; color: var(--ash);
+    }
+    @keyframes jspin { to { transform: rotate(360deg); } }
+    @keyframes jspinrev { to { transform: rotate(-360deg); } }
+    @keyframes jwave { 0%, 100% { transform: scaleY(.16); } 50% { transform: scaleY(1); } }
+    @keyframes jcore { 0%, 100% { transform: scale(1); opacity: .9; } 50% { transform: scale(1.06); opacity: 1; } }
+
+    .galaxy-btn {
+      position: absolute; top: 32px; right: 32px; z-index: 10;
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 20px; border-radius: 9999px;
+      background: rgba(124, 107, 255, 0.12);
+      border: 1px solid var(--signal-border);
+      backdrop-filter: blur(6px);
+      color: var(--paper); font-size: 14px; font-weight: 500;
+      cursor: pointer; text-decoration: none;
+      transition: all 0.2s ease;
+    }
+    .galaxy-btn:hover {
+      background: rgba(124, 107, 255, 0.24);
+      border-color: var(--signal);
+      box-shadow: 0 0 18px rgba(124, 107, 255, 0.45);
+      transform: translateY(-1px);
+    }
+    .galaxy-btn .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--signal); box-shadow: 0 0 8px var(--signal);
+    }
+  </style>
+</head>
+<body>
+<div style="position:relative; width:100vw; height:100vh; overflow:hidden; background: radial-gradient(circle at center, #1b0e3b 0%, #070412 75%);">
+
+  <!-- HUD corner brackets -->
+  <div style="position:absolute; top:18px; left:18px; width:22px; height:22px; border-top:1px solid rgba(244,241,234,.15); border-left:1px solid rgba(244,241,234,.15)"></div>
+  <div style="position:absolute; top:18px; right:18px; width:22px; height:22px; border-top:1px solid rgba(244,241,234,.15); border-right:1px solid rgba(244,241,234,.15)"></div>
+  <div style="position:absolute; bottom:18px; left:18px; width:22px; height:22px; border-bottom:1px solid rgba(244,241,234,.15); border-left:1px solid rgba(244,241,234,.15)"></div>
+  <div style="position:absolute; bottom:18px; right:18px; width:22px; height:22px; border-bottom:1px solid rgba(244,241,234,.15); border-right:1px solid rgba(244,241,234,.15)"></div>
+
+  <!-- Galaxy navigation button -->
+  <a class="galaxy-btn" href="/index.html">
+    <span class="dot"></span>
+    <span>Γαλαξίας →</span>
+  </a>
+
+  <!-- ORB -->
+  <div id="orbwrap" style="position:absolute; top:calc(50% - 20px); left:50%;
+    transform:translate(-50%,-50%) scale(1); transition:transform .5s cubic-bezier(.2,.7,.2,1);
+    pointer-events:none; z-index:2">
+    <div style="position:relative; width:260px; height:260px; display:flex; align-items:center; justify-content:center">
+      <div style="position:absolute; inset:0; border-radius:50%; border:1px solid rgba(124,107,255,.16); animation:jspin 44s linear infinite"></div>
+      <div style="position:absolute; inset:20px; border-radius:50%; border:1px dashed rgba(244,241,234,.06); animation:jspinrev 34s linear infinite"></div>
+      <div style="position:absolute; inset:38px; border-radius:50%; border:2px solid transparent; border-top-color:var(--signal); border-right-color:rgba(124,107,255,.35); animation:jspin 9s linear infinite"></div>
+      <div style="position:absolute; inset:60px; border-radius:50%; border:2px dotted rgba(124,107,255,.28); animation:jspinrev 26s linear infinite"></div>
+      <div id="core" style="position:relative; width:108px; height:108px; border-radius:50%;
+        background:rgba(124,107,255,.07); border:1px solid rgba(124,107,255,.42);
+        box-shadow:0 0 60px rgba(124,107,255,.28),inset 0 0 40px rgba(124,107,255,.14);
+        display:flex; align-items:center; justify-content:center;
+        animation:jcore 3.4s ease-in-out infinite">
+        <div id="eq" style="display:flex; align-items:center; justify-content:center; gap:2px; height:12px; width:88px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LEFT: clock + greeting -->
+  <div style="position:absolute; top:32px; left:32px; width:270px; z-index:3">
+    <div class="panel" id="panel-greeting">
+      <div class="glow"></div>
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:16px">
+        <span style="font-size:16px; font-weight:500; letter-spacing:-.04em">move ai</span>
+        <span class="mono" style="font-size:8px; letter-spacing:.18em; text-transform:uppercase; color:var(--signal); border:1px solid var(--signal-border); border-radius:2px; padding:2px 5px">Jarvis</span>
+      </div>
+      <div id="clock" class="mono" style="font-size:42px; font-weight:500; letter-spacing:-.02em; line-height:1">--:--</div>
+      <div id="dateStr" class="mono label" style="margin-top:10px">-</div>
+      <div id="greeting" style="font-size:15px; font-weight:500; margin-top:12px">-</div>
+    </div>
+  </div>
+
+  <!-- LEFT: agenda -->
+  <div style="position:absolute; top:230px; left:32px; width:270px; z-index:3">
+    <div class="panel" id="panel-agenda">
+      <div class="glow"></div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
+        <span class="label">Σήμερα &middot; ημερολόγιο</span>
+      </div>
+      <div id="agenda" style="display:flex; flex-direction:column"></div>
+    </div>
+  </div>
+
+  <!-- LEFT: global tasks -->
+  <div style="position:absolute; top:430px; left:32px; width:270px; z-index:3">
+    <div class="panel" id="panel-tasks">
+      <div class="glow"></div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
+        <span class="label">Εργασίες &middot; όλα τα projects</span>
+        <span id="tasks-count" class="mono" style="font-size:9px; color:var(--signal)">0</span>
+      </div>
+      <div id="tasks-summary" style="display:flex; flex-direction:column"></div>
+    </div>
+  </div>
+
+  <!-- LEFT: study tracks -->
+  <div style="position:absolute; top:640px; left:32px; width:270px; z-index:3">
+    <div class="panel" id="panel-study">
+      <div class="glow"></div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
+        <span class="label">Μελέτη</span>
+        <span id="study-progress" class="mono" style="font-size:9px; color:var(--signal)"></span>
+      </div>
+      <div id="study-tracks" style="display:flex; flex-direction:column"></div>
+    </div>
+  </div>
+
+  <!-- RIGHT: outreach stats -->
+  <div id="outreachWrap" style="position:absolute; top:110px; right:32px; width:270px; z-index:3;">
+    <div class="panel" id="panel-outreach">
+      <div class="glow"></div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <span class="label">Επικοινωνία &middot; Μετρήσεις</span>
+        <span class="mono" style="font-size:8px; color:var(--signal); letter-spacing:0.05em;">ΧΘΕΣ</span>
+      </div>
+      <div style="display:flex; align-items:baseline; gap:8px; margin-bottom:10px;">
+        <span id="outreach-sent" style="font-size:30px; font-weight:500; line-height:1; color:var(--paper)">0</span>
+        <span class="mono" style="font-size:9px; letter-spacing:0.04em; text-transform:uppercase; color:var(--ash);">απεσταλμένα</span>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+        <div style="padding:10px 8px; border-radius:6px; background:rgba(124,107,255,0.08); border:1px solid rgba(124,107,255,0.2); text-align:center; grid-column: span 2;">
+          <div style="display:flex; align-items:baseline; justify-content:center; gap:5px;">
+            <span id="outreach-positives" style="font-size:22px; font-weight:500; line-height:1; color:var(--signal)">0</span>
+            <span style="font-size:12px; color:var(--ash);">/</span>
+            <span id="outreach-negatives" style="font-size:16px; color:#E8A05C;">0</span>
+          </div>
+          <div style="font-family:var(--font-mono); font-size:8px; letter-spacing:0.04em; text-transform:uppercase; color:var(--signal); margin-top:5px;">Σε συζήτηση / Χαμένα &middot; σύνολο</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM: caption + status -->
+  <div style="position:absolute; bottom:40px; left:50%; transform:translateX(-50%);
+    width:min(560px,50vw); display:flex; flex-direction:column; align-items:center; gap:12px; z-index:4">
+    <div style="display:flex; flex-direction:column; align-items:center; gap:8px; min-height:50px">
+      <span id="topicLabel" class="mono" style="font-size:9px; letter-spacing:.2em; text-transform:uppercase; color:var(--signal)"></span>
+      <p id="caption" style="font-size:16px; font-weight:400; line-height:1.5; letter-spacing:-.01em; text-align:center; margin:0"></p>
+    </div>
+    <span class="mono label" style="display:flex; align-items:center; gap:7px">
+      <span id="statusDot" style="width:6px;height:6px;border-radius:50%;background:var(--ash)"></span>
+      <span id="statusLabel">Σε αναμονή</span>
+    </span>
+  </div>
+
+</div>
+<script>
+const $=id=>document.getElementById(id);
+
+// ---- Equalizer inside the orb ----
+function buildEqualizer(mode){
+  const eq=$('eq');
+  if(eq.childElementCount!==28){
+    eq.innerHTML='';
+    for(let i=0;i<28;i++){const s=document.createElement('span');
+      s.style.cssText='width:2px;border-radius:2px;background:var(--signal);flex-shrink:0;height:100%;transform-origin:center';
+      eq.appendChild(s);}
+  }
+  const on=mode==='speaking'||mode==='listening';
+  const h=mode==='speaking'?54:mode==='listening'?30:8;
+  const dur=mode==='speaking'?.55:.9;
+  eq.style.height=h+'px';eq.style.transition='height .35s ease';
+  [...eq.children].forEach((s,i)=>{
+    const off=Math.abs(i-13.5)/13.5;
+    s.style.animation=on?`jwave ${dur}s ${(i*0.035).toFixed(3)}s ease-in-out infinite`:'none';
+    s.style.transform=on?'':'scaleY(0.14)';
+    s.style.opacity=on?(0.5+0.5*(1-off)):0.3;
+  });
+}
+buildEqualizer('idle');
+
+// ---- Clock, date, greeting (computed locally, no backend needed) ----
+const DAYS=['Κυριακή','Δευτέρα','Τρίτη','Τετάρτη','Πέμπτη','Παρασκευή','Σάββατο'];
+const MONTHS=['Ιανουαρίου','Φεβρουαρίου','Μαρτίου','Απριλίου','Μαΐου','Ιουνίου','Ιουλίου','Αυγούστου','Σεπτεμβρίου','Οκτωβρίου','Νοεμβρίου','Δεκεμβρίου'];
+const NAME='Θωμά';
+function greetingFor(h){
+  if(h>=5 && h<12) return 'Καλημέρα, '+NAME+'.';
+  if(h>=12 && h<17) return 'Καλό μεσημέρι, '+NAME+'.';
+  if(h>=17 && h<21) return 'Καλό απόγευμα, '+NAME+'.';
+  return 'Καληνύχτα, '+NAME+'.';
+}
+function tick(){
+  const d=new Date();
+  const hh=String(d.getHours()).padStart(2,'0');
+  const mm=String(d.getMinutes()).padStart(2,'0');
+  $('clock').textContent=hh+':'+mm;
+  $('dateStr').textContent=DAYS[d.getDay()]+', '+d.getDate()+' '+MONTHS[d.getMonth()];
+  $('greeting').textContent=greetingFor(d.getHours());
+}
+tick(); setInterval(tick,1000*15);
+
+// ---- Widgets: demo data for now (θα συνδεθούν με πραγματικά αργότερα) ----
+function renderAgenda(items){
+  const el=$('agenda');
+  if(!items||!items.length){el.innerHTML='<div class="mono" style="font-size:11px;color:var(--ash);padding:8px 0">Τίποτα προγραμματισμένο.</div>';return;}
+  el.innerHTML=items.map(ev=>`
+    <div style="display:flex;gap:10px;padding:8px 0;border-top:1px solid rgba(244,241,234,.07)">
+      <span class="mono" style="font-size:12px;color:var(--paper);width:40px;flex-shrink:0">${ev.time||''}</span>
+      <div style="width:2px;border-radius:2px;flex-shrink:0;background:var(--signal)"></div>
+      <span style="font-size:13px;font-weight:500;color:var(--paper);line-height:1.25">${ev.title}</span>
+    </div>`).join('');
+}
+function renderTasks(tasks){
+  const el=$('tasks-summary');
+  $('tasks-count').textContent=(tasks.open||0)+' ανοιχτές';
+  if(!tasks.items||!tasks.items.length){
+    el.innerHTML='<div class="mono" style="font-size:11px;color:var(--ash);padding:8px 0">Καμία εργασία για σήμερα.</div>';return;
+  }
+  el.innerHTML=tasks.items.map(t=>`
+    <div style="padding:7px 0;border-top:1px solid rgba(244,241,234,.07)">
+      <div style="font-size:12px;font-weight:500;color:var(--paper);line-height:1.25">${t.title}</div>
+      <div class="mono" style="font-size:9px;color:var(--ash);margin-top:3px">${t.project||'Γενικά'}${t.priority==='high'?' · ΥΨΗΛΗ':''}</div>
+    </div>`).join('');
+}
+function renderStudy(items){
+  const el=$('study-tracks');
+  if(!items||!items.length){el.innerHTML='';return;}
+  $('study-progress').textContent=items.map(t=>`${t.session||'✓'}/${t.total}`).join(' · ');
+  el.innerHTML=items.map(t=>`
+    <div style="display:flex;gap:10px;padding:9px 0;border-top:1px solid rgba(244,241,234,.07)">
+      <div style="width:2px;border-radius:2px;flex-shrink:0;background:var(--signal)"></div>
+      <div style="min-width:0">
+        <div style="font-size:13px;font-weight:600;color:var(--paper)">${t.name}</div>
+        <div class="mono" style="font-size:10px;color:var(--ash);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Συνεδρία ${t.session}/${t.total}</div>
+      </div>
+    </div>`).join('');
+}
+
+// ---- Live data: fetch από τον server· fallback σε κενό αν δεν υπάρχει ----
+function renderEmptyStudy(){
+  $('study-progress').textContent='';
+  $('study-tracks').innerHTML='<div class="mono" style="font-size:11px;color:var(--ash);padding:8px 0">Καμία μελέτη ακόμη.</div>';
+}
+function applyHome(data){
+  data=data||{};
+  renderAgenda(Array.isArray(data.agenda)?data.agenda:[]);
+  renderTasks(data.tasks&&typeof data.tasks==='object'?data.tasks:{open:0,items:[]});
+  if(Array.isArray(data.study)&&data.study.length) renderStudy(data.study); else renderEmptyStudy();
+  if(data.outreach&&typeof data.outreach==='object'){
+    const o=data.outreach;
+    $('outreach-sent').textContent=(o.sent!=null?o.sent:0);
+    $('outreach-positives').textContent=(o.positives!=null?o.positives:0);
+    $('outreach-negatives').textContent=(o.negatives!=null?o.negatives:0);
+  }
+}
+// αρχική κατάσταση: όλα κενά/μηδενικά μέχρι να απαντήσει ο server
+applyHome({});
+fetch('/api/home').then(r=>r.ok?r.json():null).then(d=>{ if(d) applyHome(d); }).catch(()=>{});
+</script>
+</body>
+</html>

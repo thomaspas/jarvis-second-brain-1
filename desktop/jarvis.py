@@ -34,6 +34,8 @@ MEMORY_PATH = JARVIS_HOME / "memory.md"
 TASKS_PATH = JARVIS_HOME / "tasks.json"
 HOME = str(Path.home())
 
+DEFAULT_LOCAL_KEY_FILE = "/home/thomas-pashoulas/.cursor/deepseek-cursor-api.key"
+
 DEFAULT_CONFIG = {
     "api_key": "PUT-YOUR-KEY-HERE",
     "model": "claude-sonnet-5",
@@ -46,9 +48,12 @@ DEFAULT_CONFIG = {
     "slack_bot_token": "",
     "slack_app_token": "",
     "outlook_client_id": "",
-    "provider": "anthropic",
+    "provider": "local",
     "nvidia_api_key": "",
     "nvidia_model": "openai/gpt-oss-120b",
+    "local_base_url": "http://127.0.0.1:11434/v1",
+    "local_model": "",
+    "local_api_key_file": DEFAULT_LOCAL_KEY_FILE,
     "shortcuts": {},
     "voice_en": "en-GB-RyanNeural",
     "voice_fr": "fr-FR-HenriNeural",
@@ -121,6 +126,9 @@ def tool_run_claude_code(args):
     for actual coding/writing tasks, not simple one-liners (use run_command for those).
     Runs on whatever plan 'claude' is logged into on this Mac (usually the user's
     Claude subscription, separate from the Anthropic API key billing)."""
+    if CFG.get("provider") == "local":
+        return ("(run_claude_code disabled while provider=local — use run_command "
+                "or switch to Anthropic)")
     folder = os.path.expanduser(args["folder"])
     if not os.path.isdir(folder):
         return f"(folder not found: {folder})"
@@ -884,9 +892,32 @@ Long-term memory:
 {memory}"""
 
 
+def _read_local_api_key():
+    path = Path(CFG.get("local_api_key_file") or DEFAULT_LOCAL_KEY_FILE).expanduser()
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 def think(user_text):
-    if CFG.get("provider") == "nvidia":
-        return think_nvidia(user_text)
+    provider = CFG.get("provider")
+    if provider == "local":
+        return think_openai_compatible(
+            user_text,
+            base_url=CFG.get("local_base_url") or "http://127.0.0.1:11434/v1",
+            api_key=_read_local_api_key(),
+            model=CFG.get("local_model") or "",
+            local_mode=True,
+        )
+    if provider == "nvidia":
+        return think_openai_compatible(
+            user_text,
+            base_url="https://integrate.api.nvidia.com/v1",
+            api_key=CFG.get("nvidia_api_key") or "",
+            model=CFG.get("nvidia_model") or "openai/gpt-oss-120b",
+            local_mode=False,
+        )
     return think_anthropic(user_text)
 
 
@@ -923,10 +954,11 @@ def think_anthropic(user_text):
 
 
 def tool_describe_screen(_args):
-    """Used only when the free NVIDIA brain is active: gpt-oss-120b can't see
-    images, so this quietly borrows a vision-capable Anthropic model for a
-    single call just to describe the screen, then hands the description back
-    as plain text to the ongoing conversation."""
+    """Used when the OpenAI-compatible brain can't see images. NVIDIA mode may
+    borrow Anthropic vision; local mode stays blind (no cloud LLM)."""
+    if CFG.get("provider") == "local":
+        return ("(blind locally — provider=local has no vision; describe the "
+                "screen in words or switch provider)")
     shot = tool_screenshot({})
     try:
         import anthropic
@@ -945,48 +977,96 @@ def tool_describe_screen(_args):
 
 TOOL_FNS["describe_screen"] = tool_describe_screen
 
-# Free alternative brain: any OpenAI-compatible endpoint (tested with NVIDIA's
-# hosted NIM API, model openai/gpt-oss-120b - fast and reliable at tool use).
-# gpt-oss-120b itself can't see images, so 'screenshot' is swapped out for
-# 'describe_screen', which borrows Anthropic vision just for that one call.
-NVIDIA_TOOL_DEFS = [
-    {"type": "function", "function": {
-        "name": t["name"], "description": t["description"], "parameters": t["input_schema"]}}
-    for t in TOOL_DEFS if t["name"] != "screenshot"
-] + [{"type": "function", "function": {
-    "name": "describe_screen",
-    "description": "Describes what's currently on screen. Use whenever asked about the screen, an open app, or 'what am I looking at' - even though this brain can't see directly, this tool can.",
-    "parameters": {"type": "object", "properties": {}}}}]
+
+def _openai_tool_defs(local_mode=False):
+    """OpenAI function tools. Local mode drops screenshot + Claude Code;
+    NVIDIA keeps describe_screen (may call Anthropic vision)."""
+    skip = {"screenshot"}
+    if local_mode:
+        skip.add("run_claude_code")
+    defs = [
+        {"type": "function", "function": {
+            "name": t["name"], "description": t["description"], "parameters": t["input_schema"]}}
+        for t in TOOL_DEFS if t["name"] not in skip
+    ]
+    defs.append({"type": "function", "function": {
+        "name": "describe_screen",
+        "description": "Describes what's currently on screen. Use whenever asked about the screen, an open app, or 'what am I looking at' - even though this brain can't see directly, this tool can.",
+        "parameters": {"type": "object", "properties": {}}}})
+    return defs
 
 
-def think_nvidia(user_text):
+def _resolve_openai_model(client, model):
+    model = (model or "").strip()
+    if model:
+        return model
+    try:
+        ids = [m.id for m in client.models.list().data if getattr(m, "id", None)]
+        return ids[0] if ids else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def think_openai_compatible(user_text, base_url, api_key, model, local_mode=False):
+    """Agent loop against any OpenAI-compatible /v1 endpoint (local llama-server
+    or NVIDIA NIM)."""
+    global _last_lang
     from openai import OpenAI
-    client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=CFG["nvidia_api_key"])
+    client = OpenAI(base_url=base_url, api_key=api_key or "local")
+    resolved = _resolve_openai_model(client, model)
+    if not resolved:
+        return ("Local brain has no model loaded, sir — is llama-server up on "
+                ":11434?" if local_mode else "No model available on that endpoint.")
     HISTORY.append({"role": "user", "content": user_text})
     del HISTORY[:-24]
     local = [{"role": "system", "content": system_prompt()}] + list(HISTORY)
-    for _ in range(10):
-        resp = client.chat.completions.create(
-            model=CFG["nvidia_model"], max_tokens=500,
-            tools=NVIDIA_TOOL_DEFS, tool_choice="auto", messages=local)
-        msg = resp.choices[0].message
-        if not msg.tool_calls:
-            global _last_lang
-            text = (msg.content or "...").strip()
+    tool_defs = _openai_tool_defs(local_mode=local_mode)
+    try:
+        for _ in range(10):
+            resp = client.chat.completions.create(
+                model=resolved, max_tokens=500,
+                tools=tool_defs, tool_choice="auto", messages=local)
+            msg = resp.choices[0].message
+            if not msg.tool_calls:
+                text = (msg.content or "...").strip()
+                text, _last_lang = extract_lang_tag(text)
+                HISTORY.append({"role": "assistant", "content": text})
+                _save_history()
+                return text
+            local.append({"role": "assistant", "content": msg.content, "tool_calls": [
+                {"id": tc.id, "type": "function",
+                 "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                for tc in msg.tool_calls]})
+            for tc in msg.tool_calls:
+                args = json.loads(tc.function.arguments or "{}")
+                out = TOOL_FNS[tc.function.name](args)
+                local.append({"role": "tool", "tool_call_id": tc.id, "content": str(out)})
+        return "I got lost in my own tools. Embarrassing. Could you repeat that?"
+    except Exception as e:  # noqa: BLE001
+        # Smaller local models often reject tools — retry once without them.
+        if not local_mode:
+            raise
+        try:
+            resp = client.chat.completions.create(
+                model=resolved, max_tokens=500, messages=local)
+            text = (resp.choices[0].message.content or "...").strip()
             text, _last_lang = extract_lang_tag(text)
             HISTORY.append({"role": "assistant", "content": text})
             _save_history()
             return text
-        local.append({"role": "assistant", "content": msg.content, "tool_calls": [
-            {"id": tc.id, "type": "function",
-             "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-            for tc in msg.tool_calls]})
-        for tc in msg.tool_calls:
-            args = json.loads(tc.function.arguments or "{}")
-            out = TOOL_FNS[tc.function.name](args)
-            local.append({"role": "tool", "tool_call_id": tc.id, "content": str(out)})
-    return "I got lost in my own tools. Embarrassing. Could you repeat that?"
+        except Exception as e2:  # noqa: BLE001
+            return f"Local brain hiccup: {e2 or e}"
 
+
+# Back-compat alias used by older call sites / docs.
+def think_nvidia(user_text):
+    return think_openai_compatible(
+        user_text,
+        base_url="https://integrate.api.nvidia.com/v1",
+        api_key=CFG.get("nvidia_api_key") or "",
+        model=CFG.get("nvidia_model") or "openai/gpt-oss-120b",
+        local_mode=False,
+    )
 
 # ---------------------------------------------------------------- voice out
 _play_lock = threading.Lock()
@@ -1210,6 +1290,7 @@ def process_utterance(whisper, audio, generation):
 
     switch_paid = re.compile(r"\b(mudar|trocar|use|usar|ative|ativar|coloque|colocar)\s+(para\s+o\s+)?(modelo\s+)?(pago|claude|paid)\b", re.I)
     switch_free = re.compile(r"\b(mudar|trocar|use|usar|ative|ativar|coloque|colocar)\s+(para\s+o\s+)?(modelo\s+)?(gratis|grátis|gratuito|free|nvidia)\b", re.I)
+    switch_local = re.compile(r"\b(mudar|trocar|use|usar|ative|ativar|coloque|colocar)\s+(para\s+o\s+)?(modelo\s+)?(local|llama|deepseek|evo)\b", re.I)
     close_home = re.compile(r"\b(fechar\s+(a\s+)?home|minimizar\s+(a\s+)?home|fechar\s+tela|minimizar\s+tela|fechar|minimizar|close\s+home|minimize\s+home)\b", re.I)
     
     if switch_paid.search(text):
@@ -1233,6 +1314,18 @@ def process_utterance(whisper, audio, generation):
         except Exception:
             pass
         speak("Modelo gratuito ativado, senhora. [LANG:pt]")
+        followup_until = time.time() + FOLLOWUP_WINDOW
+        return
+
+    if switch_local.search(text):
+        CFG["provider"] = "local"
+        try:
+            on_disk = json.loads(CONFIG_PATH.read_text())
+            on_disk["provider"] = "local"
+            CONFIG_PATH.write_text(json.dumps(on_disk, indent=2, ensure_ascii=False))
+        except Exception:
+            pass
+        speak("Cérebro local ativado, senhora. [LANG:pt]")
         followup_until = time.time() + FOLLOWUP_WINDOW
         return
 
@@ -1468,14 +1561,20 @@ class OrbApi:
         quit_jarvis()
 
     def get_provider(self):
-        return {"provider": CFG.get("provider", "anthropic"),
-                "nvidia_ready": bool(CFG.get("nvidia_api_key"))}
+        key_file = Path(CFG.get("local_api_key_file") or DEFAULT_LOCAL_KEY_FILE).expanduser()
+        return {"provider": CFG.get("provider", "local"),
+                "nvidia_ready": bool(CFG.get("nvidia_api_key")),
+                "local_ready": key_file.is_file()}
 
     def set_provider(self, provider):
-        if provider not in ("anthropic", "nvidia"):
+        if provider not in ("anthropic", "nvidia", "local"):
             return "invalid"
         if provider == "nvidia" and not CFG.get("nvidia_api_key"):
             return "no_nvidia_key"
+        if provider == "local":
+            key_file = Path(CFG.get("local_api_key_file") or DEFAULT_LOCAL_KEY_FILE).expanduser()
+            if not key_file.is_file():
+                return "no_local_key"
         CFG["provider"] = provider
         try:
             on_disk = json.loads(CONFIG_PATH.read_text())
@@ -2144,9 +2243,17 @@ def orb_position_loop(win):
 
 
 def main():
-    if API_KEY.startswith("PUT-YOUR"):
+    provider = CFG.get("provider", "local")
+    if provider != "local" and API_KEY.startswith("PUT-YOUR"):
         print(f"! Set your API key in {CONFIG_PATH} (api_key field) or export ANTHROPIC_API_KEY.")
+        print("  Or set provider to \"local\" for the OpenAI-compatible brain on :11434.")
         return
+    if provider == "local":
+        key_file = Path(CFG.get("local_api_key_file") or DEFAULT_LOCAL_KEY_FILE).expanduser()
+        if not key_file.is_file():
+            print(f"! Local key file missing: {key_file}")
+            return
+        print(f"Provider=local → {CFG.get('local_base_url') or 'http://127.0.0.1:11434/v1'}")
 
     # Atomic lock: O_CREAT|O_EXCL means exactly one process can create the
     # pidfile, even if two launch in the same instant (login autostart +
